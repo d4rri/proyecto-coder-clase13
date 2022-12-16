@@ -86,3 +86,11 @@ app.get('/data',verifyToken,(req,res)=>{
         res.status(200).json({user:data})
     })
 })
+
+
+res.send({
+    argumentos:process.argv
+    plataforma: process.platform,
+})
+
+
