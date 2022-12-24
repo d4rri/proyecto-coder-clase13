@@ -1,96 +1,91 @@
-const express = require('express');
-const path = require('path');
-const jwt = require('jsonwebtoken');
+import express from "express";
+import session from "express-session";
+import MongoStore from "connect-mongo";
+import cookieParser from "cookie-parser";
+import handlebars from "express-handlebars";
+import {Server} from "socket.io";
+import path from "path";
+import {fileURLToPath} from 'url';
+import parseArgs from "minimist";
+import cluster from "cluster";
+import os from "os";
 
-const app = express();;
+import { dbOptions } from "./config/dbConfig.js";
+import { productRouter } from "./routes/api/products.js";
+import { clientRouter } from "./routes/web/clientRoutes.js";
+import { authRouter } from "./routes/web/authRoutes.js";
+import { productsSocket } from "./routes/ws/products.js";
+import { chatSocket } from "./routes/ws/chat.js";
 
-app.listen(8080,()=>{
-    console.log("listening on  port 8080")
-})
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const publicPath = path.join(__dirname,"..","public");
-app.use(express.static(publicPath));
+//captura argumentos
+const options = {alias:{m:"mode", p:"port"}, default:{mode:"FORK", port:8080}};
+const objArguments = parseArgs(process.argv.slice(2), options);
+const MODO = objArguments.mode;
+const PORT = objArguments.port;
+// console.log("modo",MODO, "port", PORT);
 
+
+//Express server config
+const app = express();
 app.use(express.json());
-app.use(express.urlencoded({extended: true}));
+app.use(express.urlencoded({extended:true}));
+app.use(express.static(__dirname+"/public"));
 
-let users = [];
+//Configuracion template engine handlebars
+app.engine(".hbs",handlebars.engine({extname: '.hbs'}));
+app.set('views', __dirname+'/views');
+app.set("view engine", ".hbs");
 
-//routes
-app.get('/',(req,res)=>{
-    res.sendFile(publicPath+'/index.html')
-})
-
-app.get('/signup',(req,res)=>{
-    res.sendFile(publicPath+'/signup.html')
-})
-
-app.get('/login',(req,res)=>{
-    res.sendFile(publicPath+'/login.html')
-})
-
-app.get('/profile',(req,res)=>{
-    res.sendFile(publicPath+'/profile.html')
-})
-
-app.post('/signup', (req,res)=>{
-    const {username, password} = req.body;
-    const userFound = users.find(el=>el.username === username);
-    if(userFound){
-        res.status(400).json({message:"Este usuario ya existe"})
-    } else{
-        console.log('username', username, 'pass', password)
-        if(username && password){
-            const newUser = req.body;
-            newUser.id = users.length;
-            users.push(newUser);
-            jwt.sign({user: newUser},'claveDeCifrado',(err,token)=>{
-                res.status(200).json({token: token, username: username})
-            })
-        } else {
-            res.status(400).json({message:"Usuario no registrado"})
-        }
+//Configuración de la sesión
+app.use(cookieParser());
+app.use(session({
+    store: MongoStore.create({
+        mongoUrl: dbOptions.mongoDBAtlas.mongoUrl
+    }),
+    secret:"ClaveSecreta",
+    resave: false,
+    saveUninitialized: false,
+    cookie:{
+        maxAge: 60000 //10min
     }
-})
+}));
 
-app.post('/login',(req,res)=>{
-    const {username, password} = req.body;
-    const userFound = users.find(el=>el.username === username);
-    if(!userFound){
-        res.status(400).json({message:"Este usuario no esta registrado"})
-    } else{
-        if(userFound.password === password){
-            jwt.sign({user: userFound}, 'claveDeCifrado', (err,token)=>{
-                res.status(200).json({token: token, username: username})
-            })
-        } else {
-            res.status(400).json({message:"credenciales invalidas"})
-        }
-    }
-})
+// Server routes
+// Api routes
+app.use('/api/productos',productRouter);
+//view routes
+app.use(clientRouter);
+app.use(authRouter);
 
-const verifyToken = (req,res,next)=>{
-    const headerToken = req.headers['authorization'];
-    if(typeof(headerToken) !== "undefined"){
-        const bearerToken = headerToken.split(' ')[1];
-        req.token = bearerToken;
-        next();
-    } else{
-        res.status(400);
+
+//Express server
+if(MODO === "CLUSTER" && cluster.isPrimary) {
+    console.log("modo cluster")
+    const numCPUS = os.cpus().length; //numero de nucleos del procesador
+    for(let i=0; i<numCPUS;i++){
+        cluster.fork(); //creamos los subprocesos
     }
+
+    cluster.on("exit",(worker)=>{
+        console.log(`El subproceso ${worker.process.pid} falló`);
+        cluster.fork();
+    });
+
+} else{
+    const server = app.listen(PORT,()=>{
+        console.log(`listening on port ${PORT} on process ${process.pid}`);
+    });
+
+    //Websocket server
+    const io = new Server(server);
+    //configuracion websocket
+    io.on("connection",async(socket)=>{
+        // console.log('Nuevo cliente conectado!');
+        //PRODUCTOS
+        productsSocket(socket, io.sockets);
+        //CHAT
+        chatSocket(socket, io.sockets);
+    });
 }
-
-app.get('/data',verifyToken,(req,res)=>{
-    jwt.verify(req.token,'claveDeCifrado',(err,data)=>{
-        if(err) return res.status(403).json({message:"not authorized"})
-        res.status(200).json({user:data})
-    })
-})
-
-
-res.send({
-    argumentos:process.argv
-    plataforma: process.platform,
-})
-
-
