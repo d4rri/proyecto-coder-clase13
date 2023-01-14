@@ -9,7 +9,8 @@ import {fileURLToPath} from 'url';
 import parseArgs from "minimist";
 import cluster from "cluster";
 import os from "os";
-
+import compression from "compression";
+import {logger} from "logger.js"
 import { dbOptions } from "./config/dbConfig.js";
 import { productRouter } from "./routes/api/products.js";
 import { clientRouter } from "./routes/web/clientRoutes.js";
@@ -34,7 +35,7 @@ app.use(express.urlencoded({extended:true}));
 app.use(express.static(__dirname+"/public"));
 
 //Configuracion template engine handlebars
-app.engine(".hbs",handlebars.engine({extname: '.hbs'}));
+app.engine(".hbs", compression(), handlebars.engine({extname: '.hbs'}));
 app.set('views', __dirname+'/views');
 app.set("view engine", ".hbs");
 
@@ -89,3 +90,17 @@ if(MODO === "CLUSTER" && cluster.isPrimary) {
         chatSocket(socket, io.sockets);
     });
 }
+
+app.get("/sumar", (req,res)=>{
+    const {num1, num2}= req.query;
+    if(!num1 || !num2){
+        logger.error("El usuario no ingreso los numeros");
+        res.send("Por favor ingresa los numeros");
+    } else if(!Number.isInteger(parseInt(num1)) || !Number.isInteger(parseInt(num2))){
+        logger.warn("Datos invalidos");
+        res.send("Datos invalidos");
+    } else{
+        logger.info("La suma fue realizada correctamente")
+        res.send(`la suma es ${parseInt(num1) + parseInt(num2)}`);
+    }
+});
